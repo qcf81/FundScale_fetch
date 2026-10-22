@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+.idea/
+
+# 运行后生成的数据和图表
+data.db
+data_*.db
+*.db-wal
+*.db-shm
+trend*.png
