@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""统计并输出各基金在不同周期（最近1天、1周、1月、半年）的规模变化情况。"""
+"""统计并输出各基金在不同周期（最近1天、1周、1月、半年）的规模变化情况，并显示具体的对照日期。"""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ def get_latest_value_on_or_before(records: list[tuple[date, float]], target_date
     valid = [(d, v) for d, v in records if d <= target_date]
     if not valid:
         return None
-    # 按日期排序，取最接近目标日期（即最大的一天）
     valid.sort(key=lambda x: x[0])
     return valid[-1]
 
@@ -74,24 +73,33 @@ def main() -> int:
         return 1
     global_latest_date = max(all_dates)
 
-    # 定义各个周期的目标回溯天数
-    periods = {
-        "最近1天": 1,
-        "最近1周": 7,
-        "最近1月": 30,
-        "最近半年": 182,
-    }
+    # 定义周期及目标回溯天数
+    periods = [
+        ("最近1天", 1),
+        ("最近1周", 7),
+        ("最近1月", 30),
+        ("最近半年", 182),
+    ]
 
-    print(f"============================================================")
-    print(f" ETF 基金规模变动统计报告 (基准日期: {global_latest_date})")
-    print(f"============================================================\n")
+    # 获取全图中各周期实际对齐的推算目标日期（以全局最新日期往前推）
+    period_target_dates = {}
+    for p_name, days_delta in periods:
+        period_target_dates[p_name] = global_latest_date - timedelta(days=days_delta)
+
+    print(
+        f"\n==========================================================================================================")
+    print(f"                                   ETF 基金规模变动统计报告")
+    print(f"  最新数据基准日期: {global_latest_date}")
+    print(f"  各周期对比基准日: " + " | ".join([f"{p_name}(~{period_target_dates[p_name]})" for p_name, _ in periods]))
+    print(
+        f"==========================================================================================================\n")
 
     for category_name, fund_dict in categorized_records.items():
         print(f"【分类：{category_name}】")
-        print("-" * 75)
+        print("-" * 110)
         print(
-            f"{'基金代码':<8} | {'基金名称':<14} | {'最新规模(亿)':<10} | {'最近1天':<12} | {'最近1周':<12} | {'最近1月':<12} | {'最近半年':<12}")
-        print("-" * 75)
+            f"{'代码':<6} | {'基金名称':<12} | {'最新规模':<9} | {'最近1天变动':<16} | {'最近1周变动':<16} | {'最近1月变动':<16} | {'最近半年变动':<16}")
+        print("-" * 110)
 
         for f_code, records in fund_dict.items():
             records.sort(key=lambda x: x[0])
@@ -100,26 +108,28 @@ def main() -> int:
             # 最新数据
             latest_rec = records[-1]
             latest_val = latest_rec[1]
+            latest_date_str = latest_rec[0].strftime("%Y-%m-%d")
 
             period_strs = []
-            for p_name, days_delta in periods.items():
+            for p_name, days_delta in periods:
                 target_d = global_latest_date - timedelta(days=days_delta)
                 past_rec = get_latest_value_on_or_before(records, target_d)
 
                 if past_rec:
-                    past_val = past_rec[1]
+                    past_d, past_val = past_rec
                     diff_val = latest_val - past_val
                     diff_pct = (diff_val / past_val) * 100 if abs(past_val) > 1e-6 else 0.0
                     sign = "+" if diff_val > 0 else ""
-                    p_str = f"{sign}{diff_val:.2f}亿({sign}{diff_pct:.1f}%)"
+                    # 包含变动金额、百分比以及对比的具体日期
+                    p_str = f"{sign}{diff_val:.2f}亿({sign}{diff_pct:.1f}%) [{past_d.strftime('%m-%d')}]"
                 else:
-                    p_str = "无数据"
+                    p_str = "无历史数据"
                 period_strs.append(p_str)
 
             print(
-                f"{f_code:<8} | {fund_name:<14} | {latest_val:<10.2f} | {period_strs[0]:<12} | {period_strs[1]:<12} | {period_strs[2]:<12} | {period_strs[3]:<12}")
+                f"{f_code:<6} | {fund_name:<12} | {latest_val:<9.2f}亿 | {period_strs[0]:<16} | {period_strs[1]:<16} | {period_strs[2]:<16} | {period_strs[3]:<16}")
 
-        print("-" * 75 + "\n")
+        print("-" * 110 + "\n")
 
     return 0
 
