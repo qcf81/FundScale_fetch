@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""从 SQLite 读取基金规模记录，并按类别（上证50ETF / 沪深300ETF）分别绘制独立的折线图。"""
+"""从 SQLite 读取基金规模记录，并按类别（上证50ETF / 沪深300ETF等）分别绘制全部历史及最近半年的折线图。"""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from fundscale_fetch import (
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="按基金大类分别绘制规模走势对比图。",
+        description="按基金大类分别绘制规模走势对比图（支持全量及最近半年）。",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
@@ -33,12 +33,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--save",
         action="store_true",
-        help="把图表分别保存为图片（如 sse50_trend.png, csi300_trend.png）",
+        help="把图表分别保存为图片",
     )
     parser.add_argument(
         "--no-show",
         action="store_true",
         help="只生成/保存图片，不弹出图表窗口",
+    )
+    parser.add_argument(
+        "--recent-only",
+        action="store_true",
+        help="如果指定该参数，则仅生成最近半年的图表，不生成全量图",
     )
     return parser
 
@@ -50,11 +55,11 @@ def load_all_records(db_path: Path) -> tuple[dict[str, dict[str, list[tuple[date
 
     connection = sqlite3.connect(str(db_path))
     try:
-        raw_rows = connection.execute("SELECT fund_code, date, value, fund_name FROM records ORDER BY fund_code, date").fetchall()
+        raw_rows = connection.execute(
+            "SELECT fund_code, date, value, fund_name FROM records ORDER BY fund_code, date").fetchall()
     finally:
         connection.close()
 
-    # 构建代码到分类的映射
     code_to_category = {}
     for cat_name, codes in FUND_CATEGORIES.items():
         for c in codes:
@@ -78,11 +83,9 @@ def load_all_records(db_path: Path) -> tuple[dict[str, dict[str, list[tuple[date
         except (TypeError, ValueError):
             continue
 
-        # 归类，若不在预定义列表中则归为 "其他ETF"
         category = code_to_category.get(f_code, "其他ETF")
         categorized_records[category][f_code].append((day, value))
 
-    # 排序内部日期
     result = {}
     for cat, fund_dict in categorized_records.items():
         result[cat] = {f_code: sorted(items, key=lambda x: x[0]) for f_code, items in fund_dict.items()}
@@ -109,11 +112,12 @@ def configure_chinese_font() -> None:
 
 
 def draw_category_chart(
-    category_name: str,
-    fund_records: dict[str, list[tuple[date, float]]],
-    fund_names_map: dict[str, str],
-    save_images: bool,
-    show: bool,
+        category_name: str,
+        fund_records: dict[str, list[tuple[date, float]]],
+        fund_names_map: dict[str, str],
+        save_images: bool,
+        show: bool,
+        recent_months_only: bool = False,
 ) -> None:
     import matplotlib
 
@@ -128,11 +132,33 @@ def draw_category_chart(
 
     configure_chinese_font()
 
+    # 如果要求最近半年，过滤数据
+    filtered_fund_records = {}
+    cutoff_date = None
+    if recent_months_only:
+        # 简单以 182 天（约半年）作为切分点
+        # 也可以通过寻找所有数据中的最大日期往前推 182 天
+        all_dates = [d for records in fund_records.values() for d, _ in records]
+        if all_dates:
+            max_date = max(all_dates)
+            cutoff_date = max_date - timedelta(days=182)
+
+    for f_code, records in fund_records.items():
+        if recent_months_only and cutoff_date:
+            sub_records = [(d, v) for d, v in records if d >= cutoff_date]
+            if sub_records:
+                filtered_fund_records[f_code] = sub_records
+        else:
+            filtered_fund_records[f_code] = records
+
+    if not filtered_fund_records:
+        return
+
     fig, ax = plt.subplots(figsize=(11.5, 6.2), dpi=120)
     colors = ["#b33939", "#218c74", "#227093", "#cc8e35", "#474787", "#706fd3", "#e17055", "#00cec9"]
 
     all_days = []
-    for idx, (f_code, records) in enumerate(fund_records.items()):
+    for idx, (f_code, records) in enumerate(filtered_fund_records.items()):
         color = colors[idx % len(colors)]
         fund_name = fund_names_map.get(f_code, f"基金 {f_code}")
         days = [item[0] for item in records]
@@ -144,7 +170,7 @@ def draw_category_chart(
             values,
             color=color,
             linewidth=1.8,
-            marker="o" if len(days) <= 180 else None,
+            marker="o" if len(days) <= 120 else None,
             markersize=4.0,
             markerfacecolor="white",
             markeredgewidth=1.0,
@@ -164,7 +190,8 @@ def draw_category_chart(
             ax.margins(x=0.025)
     ax.margins(y=0.14)
 
-    title = f"{category_name} 规模走势对比"
+    suffix = "（最近半年）" if recent_months_only else "（全部历史）"
+    title = f"{category_name} 规模走势对比 {suffix}"
     ax.set_title(title, fontsize=16, fontweight="bold", pad=16)
     ax.set_xlabel("日期", fontsize=11)
     ax.set_ylabel("基金规模（亿元）", fontsize=11)
@@ -182,13 +209,14 @@ def draw_category_chart(
     fig.tight_layout(rect=(0, 0.03, 1, 1))
 
     if save_images:
-        filename = f"{category_name}_trend.png"
+        file_suffix = "recent" if recent_months_only else "history"
+        filename = f"{category_name}_trend_{file_suffix}.png"
         save_path = Path(filename)
         fig.savefig(save_path, dpi=160, bbox_inches="tight", facecolor="white")
         print(f"[{category_name}] 图表已保存为：{save_path.resolve()}")
 
     if show:
-        print(f"正在显示 [{category_name}] 的图表窗口...")
+        print(f"正在显示 [{category_name}] 的图表窗口 {suffix}...")
         plt.show()
     else:
         plt.close(fig)
@@ -209,17 +237,31 @@ def main(argv: list[str] | None = None) -> int:
         print(f"数据库中没有记录，请先运行 main.py。", file=sys.stderr)
         return 1
 
-    # 针对每一个分类（上证50ETF、沪深300ETF等）分别画图
     for category_name, fund_records in categorized_records.items():
         if not fund_records:
             continue
-        print(f"\n正在生成分类: {category_name} 的走势图...")
+
+        if not args.recent_only:
+            # 1. 绘制全部历史图表
+            print(f"\n正在生成分类: {category_name} 的全部历史走势图...")
+            draw_category_chart(
+                category_name=category_name,
+                fund_records=fund_records,
+                fund_names_map=fund_names_map,
+                save_images=args.save,
+                show=not args.no_show,
+                recent_months_only=False,
+            )
+
+        # 2. 绘制最近半年图表
+        print(f"\n正在生成分类: {category_name} 的最近半年走势图...")
         draw_category_chart(
             category_name=category_name,
             fund_records=fund_records,
             fund_names_map=fund_names_map,
             save_images=args.save,
             show=not args.no_show,
+            recent_months_only=True,
         )
 
     return 0
