@@ -205,7 +205,7 @@ def draw_category_chart(
     ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
 
     ax.legend(loc="upper left", frameon=True, fontsize=10)
-    fig.text(0.99, 0.012, "数据来源：上海证券交易所基金网站", ha="right", va="bottom", fontsize=8, color="#777777")
+    fig.text(0.99, 0.012, "数据来源：上海/深圳证券交易所基金网站", ha="right", va="bottom", fontsize=8, color="#777777")
     fig.tight_layout(rect=(0, 0.03, 1, 1))
 
     if save_images:
